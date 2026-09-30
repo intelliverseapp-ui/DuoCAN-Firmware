@@ -1,0 +1,25 @@
+menu "DuoCAN USB Configuration"
+
+    #
+    # TinyUSB core enable
+    #
+    config TINYUSB_ENABLED
+        bool "Enable TinyUSB stack"
+        default y
+
+    #
+    # CDC ACM class driver enable
+    #
+    config TINYUSB_CDC_ENABLED
+        bool "Enable TinyUSB CDC ACM"
+        default y
+
+    #
+    # ESP32-C6 USB Serial/JTAG driver
+    # (This is the actual USB Device block on ESP32-C6)
+    #
+    config DUOCAN_USB_SERIAL_JTAG
+        bool "Enable ESP32-C6 USB Serial/JTAG Device"
+        default y
+
+endmenu
