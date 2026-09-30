@@ -1,0 +1,22 @@
+# ESP-IDF build output
+build/
+bootloader/
+partition_table/
+flash_args
+sdkconfig.old
+sdkconfig.*
+*.bin
+*.elf
+*.map
+*.o
+*.d
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+.idf_env/
+.venv/
+
+# macOS junk
+.DS_Store
