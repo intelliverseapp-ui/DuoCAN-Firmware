@@ -1,43 +1,39 @@
 #include "duocan_leds.h"
-#include "driver/gpio.h"
+#include "ws2812.h"
+#include "esp_log.h"
 
-// DuoCAN Rev A LED pin map
+//
+// DuoCAN Rev A LED subsystem
+// Uses WS2812 addressable RGB LEDs on GPIO18 (D10)
+// LED1 = System Status  (pixel 0)
+// LED2 = CAN Activity   (pixel 1)
+//
 
-// LED1 (System Status)
-#define LED1_R 10
-#define LED1_G 9
-#define LED1_B 8
+static const char *TAG = "DuoCAN_LEDS";
 
-// LED2 (CAN Activity)
-#define LED2_R 14
-#define LED2_G 13
-#define LED2_B 12
+// Pixel indices
+#define LED1_INDEX 0
+#define LED2_INDEX 1
 
-static void configure_pin(int pin)
-{
-    gpio_set_direction(pin, GPIO_MODE_OUTPUT);
-    gpio_set_level(pin, 0);
-}
-
+// ------------------------------------------------------------
+// Initialization
+// ------------------------------------------------------------
 void duocan_leds_init(void)
 {
-    // Configure all LED pins
-    configure_pin(LED1_R);
-    configure_pin(LED1_G);
-    configure_pin(LED1_B);
-
-    configure_pin(LED2_R);
-    configure_pin(LED2_G);
-    configure_pin(LED2_B);
+    ESP_LOGI(TAG, "Initializing DuoCAN WS2812 LED subsystem...");
+    ws2812_init();
+    ws2812_clear();
+    ws2812_show();
+    ESP_LOGI(TAG, "DuoCAN LEDs ready");
 }
 
-// ---------------- LED1 (System Status) ----------------
-
+// ------------------------------------------------------------
+// Legacy convenience API (kept for compatibility)
+// ------------------------------------------------------------
 void led1_set_rgb(uint8_t r, uint8_t g, uint8_t b)
 {
-    gpio_set_level(LED1_R, r ? 1 : 0);
-    gpio_set_level(LED1_G, g ? 1 : 0);
-    gpio_set_level(LED1_B, b ? 1 : 0);
+    ws2812_set_pixel(LED1_INDEX, r, g, b);
+    ws2812_show();
 }
 
 void led1_set_red(void)   { led1_set_rgb(255, 0, 0); }
@@ -45,16 +41,81 @@ void led1_set_green(void) { led1_set_rgb(0, 255, 0); }
 void led1_set_blue(void)  { led1_set_rgb(0, 0, 255); }
 void led1_set_off(void)   { led1_set_rgb(0, 0, 0); }
 
-// ---------------- LED2 (CAN Activity) ----------------
-
 void led2_set_rgb(uint8_t r, uint8_t g, uint8_t b)
 {
-    gpio_set_level(LED2_R, r ? 1 : 0);
-    gpio_set_level(LED2_G, g ? 1 : 0);
-    gpio_set_level(LED2_B, b ? 1 : 0);
+    ws2812_set_pixel(LED2_INDEX, r, g, b);
+    ws2812_show();
 }
 
 void led2_set_red(void)   { led2_set_rgb(255, 0, 0); }
 void led2_set_green(void) { led2_set_rgb(0, 255, 0); }
 void led2_set_blue(void)  { led2_set_rgb(0, 0, 255); }
 void led2_set_off(void)   { led2_set_rgb(0, 0, 0); }
+
+// ------------------------------------------------------------
+// Automotive Status API
+// ------------------------------------------------------------
+
+// CAN idle = dim white
+void duocan_leds_can_idle(void)
+{
+    ws2812_set_pixel(LED2_INDEX, 10, 10, 10);
+    ws2812_show();
+}
+
+// CAN RX = green
+void duocan_leds_can_rx_active(void)
+{
+    ws2812_set_pixel(LED2_INDEX, 0, 255, 0);
+    ws2812_show();
+}
+
+// CAN TX = blue
+void duocan_leds_can_tx_active(void)
+{
+    ws2812_set_pixel(LED2_INDEX, 0, 0, 255);
+    ws2812_show();
+}
+
+// Wi-Fi AP down = LED1 off
+void duocan_leds_wifi_ap_down(void)
+{
+    ws2812_set_pixel(LED1_INDEX, 0, 0, 0);
+    ws2812_show();
+}
+
+// Wi-Fi AP up = cyan
+void duocan_leds_wifi_ap_up(void)
+{
+    ws2812_set_pixel(LED1_INDEX, 0, 255, 255);
+    ws2812_show();
+}
+
+// TCP server down = yellow
+void duocan_leds_tcp_server_down(void)
+{
+    ws2812_set_pixel(LED1_INDEX, 255, 255, 0);
+    ws2812_show();
+}
+
+// TCP server up = magenta
+void duocan_leds_tcp_server_up(void)
+{
+    ws2812_set_pixel(LED1_INDEX, 255, 0, 255);
+    ws2812_show();
+}
+
+// Error = both LEDs solid red
+void duocan_leds_error(void)
+{
+    ws2812_set_pixel(LED1_INDEX, 255, 0, 0);
+    ws2812_set_pixel(LED2_INDEX, 255, 0, 0);
+    ws2812_show();
+}
+
+// Clear both LEDs
+void duocan_leds_clear_all(void)
+{
+    ws2812_clear();
+    ws2812_show();
+}

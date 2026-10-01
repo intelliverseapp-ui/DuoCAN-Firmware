@@ -84,7 +84,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "DuoCAN ESP32-C6 starting...");
 
-    // Initialize DuoCAN Rev A LEDs
+    // Initialize DuoCAN Rev A LEDs (SAFE ADDITION)
     duocan_leds_init();
 
     // Boot indicator = LED1 RED

@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "main.c"
         "duocan_leds.c"
+        "ws2812.c"
         "tcp_server.c"
         "duocan_can.c"
 
@@ -14,3 +15,4 @@ idf_component_register(
         esp_wifi
         esp_netif
 )
+
