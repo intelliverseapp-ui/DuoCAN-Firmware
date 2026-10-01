@@ -58,28 +58,42 @@ void ws2812_init(void)
 
     ESP_ERROR_CHECK(rmt_enable(led_chan));
 
-    // Clear all pixels on boot
-    ws2812_clear();
-    ws2812_show();
+    // *** IMPORTANT CHANGE ***
+    // We no longer clear LEDs here.
+    // Application code (duocan_leds.c) controls LED state.
+    // Removing ws2812_clear() and ws2812_show() prevents wiping LED1 GREEN.
 
     ESP_LOGI(TAG, "WS2812 driver ready");
 }
 
 static void ws2812_refresh(void)
 {
+    if (!led_chan || !led_encoder) {
+        ESP_LOGE(TAG, "WS2812 refresh called before init");
+        return;
+    }
+
     rmt_transmit_config_t tx_cfg = {
         .loop_count = 0
     };
 
-    ESP_ERROR_CHECK(rmt_transmit(
+    esp_err_t err = rmt_transmit(
         led_chan,
         led_encoder,
         pixels,
         sizeof(pixels),
         &tx_cfg
-    ));
+    );
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "WS2812 data transmit FAILED: %s", esp_err_to_name(err));
+        return;
+    }
 
-    ESP_ERROR_CHECK(rmt_tx_wait_all_done(led_chan, -1));
+    err = rmt_tx_wait_all_done(led_chan, -1);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "WS2812 wait FAILED: %s", esp_err_to_name(err));
+        return;
+    }
 }
 
 //

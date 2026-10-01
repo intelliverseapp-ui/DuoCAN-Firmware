@@ -1,4 +1,6 @@
 #include "tcp_server.h"
+#include "tcp_queue.h"
+#include "duocan_leds.h"
 #include "esp_log.h"
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
@@ -10,23 +12,45 @@ static const char *TAG = "TCP";
 
 #define TCP_PORT 1234
 #define RX_BUF_SIZE 256
+#define CMD_BUF_SIZE 512
 
 // Global TCP client socket for CAN RX forwarding
 int g_tcp_client_sock = -1;
 
-void duocan_enable_can(void);
-void duocan_disable_can(void);
-void duocan_send_can_frame(uint32_t id, uint8_t dlc, uint8_t *data);
+esp_err_t duocan_enable_can(void);
+esp_err_t duocan_disable_can(void);
+esp_err_t duocan_send_can_frame(uint32_t id, uint8_t dlc, const uint8_t *data);
 void duocan_get_status(char *out, size_t out_len);
 
 // ------------------------------------------------------------
-// CAN RX forwarding function (called from duocan_can.c)
+// Safe socket send (handles partial writes)
+// ------------------------------------------------------------
+static esp_err_t safe_send(int sock, const char *data, size_t len)
+{
+    size_t total = 0;
+
+    while (total < len) {
+        int sent = send(sock, data + total, len - total, 0);
+
+        if (sent < 0) {
+            ESP_LOGE(TAG, "Socket send error");
+            return ESP_FAIL;
+        }
+
+        total += sent;
+    }
+
+    return ESP_OK;
+}
+
+// ------------------------------------------------------------
+// CAN RX forwarding now uses outbound queue
 // ------------------------------------------------------------
 void tcp_server_send_line(const char *line)
 {
-    if (g_tcp_client_sock > 0) {
-        send(g_tcp_client_sock, line, strlen(line), 0);
-    }
+    // DO NOT send directly.
+    // Queue it for the TCP sender task.
+    tcp_queue_push(line);
 }
 
 // ------------------------------------------------------------
@@ -36,54 +60,50 @@ static void handle_command(const char *cmd, int client_sock)
 {
     char response[256];
 
-    char clean[RX_BUF_SIZE];
-    snprintf(clean, sizeof(clean), "%s", cmd);
-    clean[strcspn(clean, "\r\n")] = 0;
+    ESP_LOGI(TAG, "CMD: %s", cmd);
 
-    ESP_LOGI(TAG, "CMD: %s", clean);
-
-    if (strcasecmp(clean, "PING") == 0) {
-        send(client_sock, "PONG\n", 5, 0);
+    if (strcasecmp(cmd, "PING") == 0) {
+        safe_send(client_sock, "PONG\n", 5);
         return;
     }
 
-    if (strcasecmp(clean, "ENABLE_CAN") == 0) {
+    if (strcasecmp(cmd, "ENABLE_CAN") == 0) {
         duocan_enable_can();
-        send(client_sock, "CAN ENABLED\n", 12, 0);
+        safe_send(client_sock, "CAN ENABLED\n", 12);
         return;
     }
 
-    if (strcasecmp(clean, "DISABLE_CAN") == 0) {
+    if (strcasecmp(cmd, "DISABLE_CAN") == 0) {
         duocan_disable_can();
-        send(client_sock, "CAN DISABLED\n", 13, 0);
+        safe_send(client_sock, "CAN DISABLED\n", 13);
         return;
     }
 
-    if (strcasecmp(clean, "STATUS") == 0) {
+    if (strcasecmp(cmd, "STATUS") == 0) {
         duocan_get_status(response, sizeof(response));
-        send(client_sock, response, strlen(response), 0);
+        safe_send(client_sock, response, strlen(response));
         return;
     }
 
-    if (strncasecmp(clean, "SEND ", 5) == 0) {
+    if (strncasecmp(cmd, "SEND ", 5) == 0) {
 
         uint32_t id = 0;
         uint32_t dlc = 0;
         uint32_t bytes[8] = {0};
 
-        int count = sscanf(clean + 5,
+        int count = sscanf(cmd + 5,
                            "%" SCNu32 " %" SCNu32 " %" SCNu32 " %" SCNu32 " %" SCNu32 " %" SCNu32 " %" SCNu32 " %" SCNu32 " %" SCNu32 " %" SCNu32,
                            &id, &dlc,
                            &bytes[0], &bytes[1], &bytes[2], &bytes[3],
                            &bytes[4], &bytes[5], &bytes[6], &bytes[7]);
 
         if (count < 2) {
-            send(client_sock, "ERR BAD SEND FORMAT\n", 20, 0);
+            safe_send(client_sock, "ERR BAD SEND FORMAT\n", 20);
             return;
         }
 
         if (dlc > 8) {
-            send(client_sock, "ERR DLC > 8\n", 12, 0);
+            safe_send(client_sock, "ERR DLC > 8\n", 12);
             return;
         }
 
@@ -96,13 +116,13 @@ static void handle_command(const char *cmd, int client_sock)
 
         snprintf(response, sizeof(response),
                  "SENT ID=%" PRIu32 " DLC=%" PRIu32 "\n", id, dlc);
-        send(client_sock, response, strlen(response), 0);
+        safe_send(client_sock, response, strlen(response));
         return;
     }
 
     snprintf(response, sizeof(response),
-             "ERR UNKNOWN CMD: %.200s\n", clean);
-    send(client_sock, response, strlen(response), 0);
+             "ERR UNKNOWN CMD: %.200s\n", cmd);
+    safe_send(client_sock, response, strlen(response));
 }
 
 // ------------------------------------------------------------
@@ -111,6 +131,8 @@ static void handle_command(const char *cmd, int client_sock)
 void tcp_server_task(void *arg)
 {
     char rx_buffer[RX_BUF_SIZE];
+    char cmd_buffer[CMD_BUF_SIZE];
+    size_t cmd_len = 0;
 
     struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
@@ -156,22 +178,39 @@ void tcp_server_task(void *arg)
         }
 
         ESP_LOGI(TAG, "Client connected");
+        duocan_leds_tcp_server_up();   // Magenta LED
 
-        const char *hello = "DuoCAN TCP READY\n";
-        send(client_sock, hello, strlen(hello), 0);
+        safe_send(client_sock, "DuoCAN TCP READY\n", 17);
+
+        cmd_len = 0;
 
         while (1) {
             int len = recv(client_sock, rx_buffer, RX_BUF_SIZE - 1, 0);
 
             if (len <= 0) {
                 ESP_LOGI(TAG, "Client disconnected");
+                duocan_leds_tcp_server_down();   // Yellow LED
                 break;
             }
 
             rx_buffer[len] = 0;
-            ESP_LOGI(TAG, "RX: %s", rx_buffer);
 
-            handle_command(rx_buffer, client_sock);
+            for (int i = 0; i < len; i++) {
+                char c = rx_buffer[i];
+
+                if (c == '\n') {
+                    cmd_buffer[cmd_len] = 0;
+                    handle_command(cmd_buffer, client_sock);
+                    cmd_len = 0;
+                }
+                else if (cmd_len < CMD_BUF_SIZE - 1) {
+                    cmd_buffer[cmd_len++] = c;
+                }
+                else {
+                    safe_send(client_sock, "ERR CMD TOO LONG\n", 17);
+                    cmd_len = 0;
+                }
+            }
         }
 
         close(client_sock);

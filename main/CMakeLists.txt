@@ -5,6 +5,7 @@ idf_component_register(
         "ws2812.c"
         "tcp_server.c"
         "duocan_can.c"
+        "tcp_queue.c"
 
     INCLUDE_DIRS
         "."
@@ -15,4 +16,3 @@ idf_component_register(
         esp_wifi
         esp_netif
 )
-

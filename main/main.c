@@ -1,11 +1,3 @@
-// main.c - DuoCAN ESP32-C6 firmware (Wi-Fi Access Point + CAN)
-// DuoCAN Shield + Seeed XIAO ESP32-C6
-// - CAN transceiver enable
-// - DuoCAN Rev A RGB LEDs (split behavior)
-// - TWAI CAN RX/TX
-// - ESP32-C6 Wi-Fi Access Point (SSID: DuoCAN-C6)
-// - TCP Server for BabyNodeAutomotive
-
 #include <stdio.h>
 #include <string.h>
 #include <inttypes.h>
@@ -24,13 +16,15 @@
 
 #include "duocan_leds.h"
 #include "tcp_server.h"
+#include "tcp_queue.h"
 #include "duocan_can.h"
 
 static const char *TAG = "DuoCAN";
 
-// ---------------- WIFI ACCESS POINT ----------------
-
-static void init_wifi_ap(void)
+// ------------------------------------------------------------
+// WIFI ACCESS POINT
+// ------------------------------------------------------------
+static esp_err_t init_wifi_ap(void)
 {
     ESP_LOGI(TAG, "Initializing Wi-Fi AP...");
 
@@ -73,10 +67,13 @@ static void init_wifi_ap(void)
     ESP_LOGI(TAG, "Wi-Fi AP started");
     ESP_LOGI(TAG, "SSID: DuoCAN-C6  PASSWORD: duocan123");
     ESP_LOGI(TAG, "Connect from Android and IP will be 192.168.4.1");
+
+    return ESP_OK;
 }
 
-// ---------------- APP MAIN ----------------
-
+// ------------------------------------------------------------
+// APP MAIN
+// ------------------------------------------------------------
 void app_main(void)
 {
     printf(">>> APP_MAIN ENTERED (DuoCAN) <<<\n");
@@ -84,35 +81,79 @@ void app_main(void)
 
     ESP_LOGI(TAG, "DuoCAN ESP32-C6 starting...");
 
-    // Initialize DuoCAN Rev A LEDs (SAFE ADDITION)
+    // Initialize DuoCAN Rev A LEDs
     duocan_leds_init();
 
     // Boot indicator = LED1 RED
     led1_set_red();
     led2_set_off();
 
+    // --------------------------------------------------------
+    // Initialize TCP outbound queue BEFORE CAN RX forwarding
+    // --------------------------------------------------------
+    tcp_queue_init();
+
     // CAN subsystem
-    duocan_can_init();
+    esp_err_t can_ret = duocan_can_init();
+    if (can_ret != ESP_OK) {
+        ESP_LOGE(TAG, "CAN init FAILED: %s", esp_err_to_name(can_ret));
+        led1_set_red();
+        while (1) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+    }
 
     // Start CAN RX forwarding task
-    xTaskCreate(duocan_can_rx_forward_task,
-                "can_rx_forward",
-                4096,
-                NULL,
-                5,
-                NULL);
+    BaseType_t can_task_ret = xTaskCreate(
+        duocan_can_rx_forward_task,
+        "can_rx_forward",
+        4096,
+        NULL,
+        5,
+        NULL
+    );
+
+    if (can_task_ret != pdPASS) {
+        ESP_LOGE(TAG, "CAN RX task creation FAILED");
+        led1_set_red();
+        while (1) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+    }
 
     // Wi-Fi Access Point
-    init_wifi_ap();
+    esp_err_t wifi_ret = init_wifi_ap();
+    if (wifi_ret != ESP_OK) {
+        ESP_LOGE(TAG, "Wi-Fi AP init FAILED: %s", esp_err_to_name(wifi_ret));
+        led1_set_red();
+        while (1) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+    }
 
     // System ready = LED1 GREEN
     led1_set_green();
     led2_set_off();
 
     // TCP Server task
-    xTaskCreate(tcp_server_task, "tcp_server", 4096, NULL, 5, NULL);
+    BaseType_t tcp_task_ret = xTaskCreate(
+        tcp_server_task,
+        "tcp_server",
+        4096,
+        NULL,
+        5,
+        NULL
+    );
 
-    ESP_LOGI(TAG, "DuoCAN ready (Wi-Fi AP + CAN + TCP Server + CAN RX Forwarding)");
+    if (tcp_task_ret != pdPASS) {
+        ESP_LOGE(TAG, "TCP server task creation FAILED");
+        led1_set_red();
+        while (1) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+    }
+
+    ESP_LOGI(TAG, "DuoCAN ready (Wi-Fi AP + CAN + TCP Queue + TCP Server + CAN RX Forwarding)");
 
     // Idle loop
     while (1) {

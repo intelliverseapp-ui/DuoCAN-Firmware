@@ -1,16 +1,17 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
+#include "esp_err.h"
 
 // CAN subsystem initialization
-void duocan_can_init(void);
+esp_err_t duocan_can_init(void);
 
 // CAN control
-void duocan_enable_can(void);
-void duocan_disable_can(void);
+esp_err_t duocan_enable_can(void);
+esp_err_t duocan_disable_can(void);
 
 // CAN TX
-void duocan_send_can_frame(uint32_t id, uint8_t dlc, uint8_t *data);
+esp_err_t duocan_send_can_frame(uint32_t id, uint8_t dlc, const uint8_t *data);
 
 // CAN status
 void duocan_get_status(char *out, size_t out_len);

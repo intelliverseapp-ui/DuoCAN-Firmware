@@ -1,0 +1,97 @@
+#include "tcp_queue.h"
+#include "tcp_server.h"
+#include "duocan_leds.h"
+#include "esp_log.h"
+#include <string.h>
+
+static const char *TAG = "TCP_QUEUE";
+
+// Global queue handle
+QueueHandle_t tcp_outbound_queue = NULL;
+
+// ------------------------------------------------------------
+// Push a line into the outbound queue (non-blocking)
+// ------------------------------------------------------------
+void tcp_queue_push(const char *line)
+{
+    if (!tcp_outbound_queue || !line) {
+        ESP_LOGE(TAG, "Queue not ready or line NULL");
+        return;
+    }
+
+    tcp_queue_item_t item;
+    memset(&item, 0, sizeof(item));
+
+    // Copy safely
+    size_t len = strnlen(line, TCP_QUEUE_MAX_LINE_LEN - 1);
+    memcpy(item.line, line, len);
+    item.len = len;
+
+    BaseType_t ok = xQueueSend(tcp_outbound_queue, &item, 0);
+
+    if (ok != pdTRUE) {
+        ESP_LOGW(TAG, "TCP outbound queue FULL — dropping line");
+        duocan_leds_tcp_server_down();   // Yellow LED = queue overflow
+    }
+}
+
+// ------------------------------------------------------------
+// Queue consumer task — drains queue and sends lines
+// ------------------------------------------------------------
+void tcp_queue_task(void *arg)
+{
+    tcp_queue_item_t item;
+
+    ESP_LOGI(TAG, "TCP queue sender task started");
+
+    while (1) {
+        // Wait forever for next item
+        if (xQueueReceive(tcp_outbound_queue, &item, portMAX_DELAY) == pdTRUE) {
+
+            // Queue has data → TCP server is active
+            duocan_leds_tcp_server_up();   // Magenta LED
+
+            // Safe TCP send
+            tcp_server_send_line(item.line);
+
+            // If queue becomes empty → system ready
+            if (uxQueueMessagesWaiting(tcp_outbound_queue) == 0) {
+                duocan_leds_tcp_server_up();   // Magenta = active but stable
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------
+// Initialization — create queue + start sender task
+// ------------------------------------------------------------
+void tcp_queue_init(void)
+{
+    ESP_LOGI(TAG, "Initializing TCP outbound queue...");
+
+    tcp_outbound_queue = xQueueCreate(TCP_QUEUE_LENGTH, sizeof(tcp_queue_item_t));
+
+    if (!tcp_outbound_queue) {
+        ESP_LOGE(TAG, "FAILED to create TCP outbound queue");
+        duocan_leds_error();
+        return;
+    }
+
+    // Create sender task
+    BaseType_t ok = xTaskCreate(
+        tcp_queue_task,
+        "tcp_queue_task",
+        4096,
+        NULL,
+        5,
+        NULL
+    );
+
+    if (ok != pdPASS) {
+        ESP_LOGE(TAG, "FAILED to start TCP queue task");
+        duocan_leds_error();
+        return;
+    }
+
+    ESP_LOGI(TAG, "TCP outbound queue ready");
+}
