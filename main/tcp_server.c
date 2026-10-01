@@ -25,7 +25,7 @@ void duocan_get_status(char *out, size_t out_len);
 // ------------------------------------------------------------
 // Safe socket send (handles partial writes)
 // ------------------------------------------------------------
-static esp_err_t safe_send(int sock, const char *data, size_t len)
+int safe_send(int sock, const char *data, size_t len)
 {
     size_t total = 0;
 
@@ -34,13 +34,13 @@ static esp_err_t safe_send(int sock, const char *data, size_t len)
 
         if (sent < 0) {
             ESP_LOGE(TAG, "Socket send error");
-            return ESP_FAIL;
+            return -1;
         }
 
         total += sent;
     }
 
-    return ESP_OK;
+    return (int)total;
 }
 
 // ------------------------------------------------------------

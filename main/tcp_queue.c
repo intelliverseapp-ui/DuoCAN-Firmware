@@ -1,5 +1,9 @@
+#include <unistd.h>            // for close()
+
+// IMPORTANT: tcp_server.h MUST come BEFORE tcp_queue.h
+#include "tcp_server.h"        // for g_tcp_client_sock and safe_send()
+
 #include "tcp_queue.h"
-#include "tcp_server.h"
 #include "duocan_leds.h"
 #include "esp_log.h"
 #include <string.h>
@@ -36,7 +40,7 @@ void tcp_queue_push(const char *line)
 }
 
 // ------------------------------------------------------------
-// Queue consumer task — drains queue and sends lines
+// Queue consumer task — drains queue and sends lines to TCP client
 // ------------------------------------------------------------
 void tcp_queue_task(void *arg)
 {
@@ -48,13 +52,26 @@ void tcp_queue_task(void *arg)
         // Wait forever for next item
         if (xQueueReceive(tcp_outbound_queue, &item, portMAX_DELAY) == pdTRUE) {
 
-            // Queue has data → TCP server is active
+            // Queue has data → TCP server active
             duocan_leds_tcp_server_up();   // Magenta LED
 
-            // Safe TCP send
-            tcp_server_send_line(item.line);
+            // If no client is connected, drop the frame
+            if (g_tcp_client_sock < 0) {
+                ESP_LOGW(TAG, "No TCP client connected — dropping telemetry");
+                continue;
+            }
 
-            // If queue becomes empty → system ready
+            // Send the line directly to the TCP client
+            int sent = safe_send(g_tcp_client_sock, item.line, item.len);
+
+            if (sent < 0) {
+                ESP_LOGE(TAG, "TCP send failed — closing client socket");
+                close(g_tcp_client_sock);
+                g_tcp_client_sock = -1;
+                duocan_leds_tcp_server_down();   // Yellow LED = connection down
+            }
+
+            // If queue becomes empty → stable active state
             if (uxQueueMessagesWaiting(tcp_outbound_queue) == 0) {
                 duocan_leds_tcp_server_up();   // Magenta = active but stable
             }
