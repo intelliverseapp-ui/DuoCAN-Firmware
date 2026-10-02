@@ -6,13 +6,18 @@ idf_component_register(
         "tcp_server.c"
         "duocan_can.c"
         "tcp_queue.c"
+        "led_test_harness.c"
+        "duocan_commands.c"
 
     INCLUDE_DIRS
         "."
 
-    REQUIRES
+    PRIV_REQUIRES
         driver
         nvs_flash
         esp_wifi
         esp_netif
+        esp_http_server
+        freertos
+        lwip
 )
